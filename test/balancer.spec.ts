@@ -4,11 +4,13 @@ import balancer, { _internal, Backend } from "../src/balancer"
 async function fakeFetch(req: RequestInfo, init?: RequestInit) {
   return new Response("hi")
 }
+async function fakeFetchError(req: RequestInfo, init?: RequestInit) {
+  return new Response("nooooo", { status: 502 })
+}
 
 function healthy() {
   return <Backend>{
-    host: `test.${Math.random()}.local:10001`,
-    proxy: fakeFetch,
+    proxy: fakeFetch.bind({}), // same function, different times
     requestCount: 0,
     statuses: [200, 200, 200],
     lastError: 0,
@@ -59,7 +61,7 @@ describe("balancing", () => {
     it("should choose healthy backends first", () => {
       const h = [healthy(), healthy()]
       const backends = [unhealthy(), unhealthy(), unhealthy()].concat(h)
-      const [b1, b2] = _internal.chooseBackends(backends, {})
+      const [b1, b2] = _internal.chooseBackends(backends)
 
       expect(h.find((e) => e === b1)).to.eq(b1, "Backend 1 should be in selected")
       expect(h.find((e) => e === b2)).to.eq(b2, "Backend 2 should be in selected")
@@ -69,9 +71,7 @@ describe("balancing", () => {
     it("ignores backends that have been tried", () => {
       const h = [healthy(), healthy()]
       const backends = [unhealthy(), unhealthy(), unhealthy()].concat(h)
-      const attempted: { [key: string]: Backend } = {}
-      attempted[h[0].host] = h[0]
-      attempted[h[1].host] = h[1]
+      const attempted = new Set<Backend>(h)
 
       const [b1, b2] = _internal.chooseBackends(backends, attempted)
       expect(h.find((e) => e === b1)).to.eq(undefined, "Backend 1 should not be in selected")
@@ -82,9 +82,9 @@ describe("balancing", () => {
 
   describe("backend stats", () => {
     it("should store last 10 statuses", async () => {
-      const backend = healthy()
       const req = new Request("http://localhost/hello/")
-      const fn = balancer([backend], "http://wat.com")
+      const fn = balancer([fakeFetch])
+      const backend = fn.backends[0]
       const statuses = Array<number>()
       for (let i = 0; i < 20; i++) {
         let resp = await fn(req)
@@ -93,6 +93,24 @@ describe("balancing", () => {
 
       expect(backend.statuses.length).to.eq(10)
       expect(backend.statuses).to.deep.eq(statuses.slice(-10))
+      expect(backend.healthScore).to.eq(1)
+    })
+
+    it("should retry on failure", async () => {
+      const fn = balancer([
+        fakeFetchError.bind({}),
+        fakeFetchError.bind({}),
+        fakeFetch
+      ])
+      // lower health of the last backend so we try errors first
+      fn.backends[2].healthScore = 0.1
+
+      const resp = await fn("http://localhost/")
+      const used = fn.backends.filter((b) => b.requestCount > 0)
+
+      expect(resp.status).to.eq(200)
+      expect(await resp.text()).to.eq("hi")
+      expect(used.length).to.be.gte(2) // at least two backends hit
     })
   })
 })
