@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { _internal, Backend } from "../src/balancer"
+import balancer, { _internal, Backend } from "../src/balancer"
 
 async function fakeFetch(req: RequestInfo, init?: RequestInit) {
   return new Response("hi")
@@ -16,10 +16,10 @@ function healthy() {
     errorCount: 0
   }
 }
-function unhealthy() {
+function unhealthy(score?: number) {
   const b = healthy()
   b.statuses.push(500, 500, 500)
-  b.healthScore = 0.5
+  b.healthScore = score || 0.5
   return b
 }
 describe("balancing", () => {
@@ -64,6 +64,35 @@ describe("balancing", () => {
       expect(h.find((e) => e === b1)).to.eq(b1, "Backend 1 should be in selected")
       expect(h.find((e) => e === b2)).to.eq(b2, "Backend 2 should be in selected")
       expect(b1).to.not.eq(b2, "Backend 1 and Backend 2 should be different")
+    })
+
+    it("ignores backends that have been tried", () => {
+      const h = [healthy(), healthy()]
+      const backends = [unhealthy(), unhealthy(), unhealthy()].concat(h)
+      const attempted: { [key: string]: Backend } = {}
+      attempted[h[0].host] = h[0]
+      attempted[h[1].host] = h[1]
+
+      const [b1, b2] = _internal.chooseBackends(backends, attempted)
+      expect(h.find((e) => e === b1)).to.eq(undefined, "Backend 1 should not be in selected")
+      expect(h.find((e) => e === b2)).to.eq(undefined, "Backend 2 should not be in selected")
+      expect(b1).to.not.eq(b2, "Backend 1 and Backend 2 should be different")
+    })
+  })
+
+  describe("backend stats", () => {
+    it("should store last 10 statuses", async () => {
+      const backend = healthy()
+      const req = new Request("http://localhost/hello/")
+      const fn = balancer([backend], "http://wat.com")
+      const statuses = Array<number>()
+      for (let i = 0; i < 20; i++) {
+        let resp = await fn(req)
+        statuses.push(resp.status)
+      }
+
+      expect(backend.statuses.length).to.eq(10)
+      expect(backend.statuses).to.deep.eq(statuses.slice(-10))
     })
   })
 })

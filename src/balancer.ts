@@ -5,29 +5,33 @@ export interface BalancerOptions extends ProxyOptions {
 }
 const proxyError = new Response("couldn't connect to origin", { status: 502 })
 
-export default function balancer(hosts: string[], proxyURL: string, options?: BalancerOptions) {
+export default function balancer(hosts: (string | Backend)[], proxyURL: string, options?: BalancerOptions) {
   if (!options) {
     options = {}
   }
   if (!options.healthURL) {
-    options.healthURL
+    options.healthURL = "/_"
   }
 
   const url = new URL(proxyURL)
   const backends = hosts.map((h) => {
+    if (typeof h === "object") {
+      return h
+    }
+    if (typeof h !== "string") {
+      throw Error("Backend must be a backend type")
+    }
     const u = new URL(url.pathname, new URL(h))
     return <Backend>{
       host: h,
       proxy: proxy(u.toString(), options),
       requestCount: 0,
-      statuses: [],
+      statuses: Array(10),
       lastError: 0,
       healthScore: 0,
       errorCount: 0
     }
   })
-  let count = 0
-  let lastError = Date.now()
 
   return async function fetchBalancer(req: RequestInfo, init?: RequestInit | undefined): Promise<Response> {
     if (typeof req === "string") {
@@ -54,17 +58,17 @@ export default function balancer(hosts: string[], proxyURL: string, options?: Ba
       let resp: Response | null
       try {
         resp = await backend.proxy(req, init)
-        resp.headers.set("Fly-Backend", backend.host.replace(/^http:\/\/\d+\.\d+\.\d+\.(\d+):7000/, "$1"))
       } catch (e) {
         resp = proxyError
       }
-      backend.statuses.push(resp ? resp.status : 500)
-      if (backend.statuses.length > 10) {
-        backend.statuses = backend.statuses.slice(-10)
+      if (backend.statuses.length < 10) {
+        backend.statuses.push(resp.status)
+      } else {
+        backend.statuses[backend.requestCount % backend.statuses.length] = resp.status
       }
+
       if (resp.status >= 500 && resp.status < 600) {
         backend.lastError = Date.now()
-        lastError = Date.now()
 
         if (canRetry(req, resp)) resp = null
 
@@ -141,7 +145,6 @@ function chooseBackends(backends: Backend[], attempted: { [key: string]: Backend
       (b.healthScore == backendA.healthScore && b.requestCount < backendA.requestCount)
     ) {
       // better backend candidate
-      console.log("scores a:", backendA.healthScore, b.healthScore)
       backendA = b
       continue
     }
@@ -150,7 +153,6 @@ function chooseBackends(backends: Backend[], attempted: { [key: string]: Backend
       (b.healthScore == backendB.healthScore && b.requestCount < backendB.requestCount)
     ) {
       // better backend candidate
-      console.log("scores b:", backendB.healthScore, b.healthScore)
       backendB = b
       continue
     }
