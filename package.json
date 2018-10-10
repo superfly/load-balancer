@@ -11,7 +11,10 @@
   },
   "author": "",
   "license": "Apache-2.0",
-  "main": "lib/balancer.js",
+  "main": "dist/src/balancer.js",
+  "files": [
+    "dist/**/*"
+  ],
   "devDependencies": {
     "@fly/fly": "^0.42.0",
     "@types/chai": "^4.1.4",
