@@ -1,6 +1,6 @@
 # Application Load Balancer
 
-This is a Fly App that works as an application load balancer. You can use it to route traffic to different backends, _or_ put it in front of other services distribute traffic based on whatever logic you desire.
+This is a Fly App that works as an application load balancer. You can use it to route traffic to different backends, _or_ put it in front of other services to distribute traffic based on whatever logic you desire.
 
 It is designed to be a ready to go load balancer library you can mix and match with other Fly App code to do interesting things like add path routing rules, authentication, caching etc.
 
